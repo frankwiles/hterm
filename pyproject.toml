@@ -9,21 +9,8 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.14"
 dependencies = [
+    "click>=8.1,<9",
     "typer>=0.15.1",
-    "rich>=13.9.4",
-    "textual>=2.1.2",
-    "httpx>=0.28.1",
-    "pydantic>=2.10.6",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.3.4",
-    "pytest-cov>=6.0.0",
-    "ruff>=0.9.6",
-    "ty>=0.0.1a6",
-    "pre-commit>=4.1.0",
-    "textual-dev>=1.7.0",
 ]
 
 [project.scripts]
@@ -54,6 +41,7 @@ select = [
 ]
 ignore = [
     "E501",   # line too long (handled by formatter)
+    "B008",   # Typer declares CLI metadata in parameter defaults
 ]
 
 [tool.ruff.lint.isort]
@@ -68,6 +56,18 @@ line-ending = "auto"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
+markers = [
+    "macos_integration: opt-in tests requiring installed macOS applications",
+]
 
 [tool.ty.environment]
 python-version = "3.14"
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.1.0",
+    "pytest>=8.3.4",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.9.6",
+    "ty>=0.0.1a6",
+]

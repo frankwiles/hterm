@@ -1,137 +1,175 @@
 # hterm
 
-Raycast extension for launching common herdr workspaces
+`hterm` is a macOS CLI for launching repeatable [Herdr](https://github.com/herdrdev/herdr) workspaces from project definitions. The Python CLI is the source of truth for the bundled private Raycast extension and Zsh completion.
 
 ## Requirements
 
+- macOS
 - Python 3.14+
-- [uv](https://github.com/astral-sh/uv) for dependency management
-- [just](https://github.com/casey/just) for running tasks (optional but recommended)
+- [uv](https://docs.astral.sh/uv/)
+- Herdr 0.8+
+- Ghostty 1.3+ with `macos-applescript` enabled
+- AeroSpace 0.20+
 
 ## Installation
 
-### Using uv (recommended)
+From a checkout, install the CLI as an isolated uv tool:
 
-```bash
-# Clone the repository
-git clone https://github.com/YOUR_USERNAME/hterm.git
-cd hterm
-
-# Install dependencies
-uv sync
-
-# Run the CLI
-uv run hterm --help
-```
-
-### Using uvx (one-off)
-
-```bash
-# Run directly from git
-uvx --from git+https://github.com/YOUR_USERNAME/hterm hterm --help
-```
-
-## Usage
-
-```bash
-# Show help
-hterm --help
-
-# Show version
+```sh
+cd /path/to/hterm
+uv tool install .
 hterm --version
-
-
-# Run hello command
-hterm hello world
-hterm hello name YourName
-
-# Fetch JSON from an API
-hterm api get json https://api.github.com
-
 ```
+
+After pulling updates, run `uv tool upgrade hterm` (or `uv tool install --force .` for an uncommitted local checkout). Ensure uv's tool bin directory is on `PATH`; `uv tool update-shell` configures this automatically.
+
+Then create `~/.hterm.toml` (see below), validate it, and install the lifecycle plugin:
+
+```sh
+hterm check
+hterm lifecycle install-plugin
+hterm home --dry-run
+```
+
+The plugin is included in the Python wheel, so installation does not depend on the source checkout remaining in place.
 
 ## Development
 
-This project uses `just` for common tasks:
-
-```bash
-# Show available commands
-just
-
-# Install dependencies
-just sync
-
-# Run the CLI
-just run --help
-
-# Run tests
-just test
-
-# Format code
-just fmt
-
-# Lint code
-just lint
-
-# Type check
-just typecheck
-
-# Run all checks
+```sh
+uv sync
+uv run hterm --help
 just check
-
-# Build package
-just build
-
-# Install pre-commit hooks
-just pre-commit
+cd raycast && npm ci && npm run lint && npm run build
 ```
 
-## Project Structure
+Other useful recipes in `Justfile` include `just test`, `just lint`, and `just build`.
 
-```
-src/hterm/
-├── __init__.py           # Package init
-├── __main__.py           # Module entry point
-├── cli/
-│   ├── app.py            # Main CLI app with autodiscovery
-│   ├── config.py         # Configuration model (CLI options + env vars)
-│   ├── ui/
-│   │   ├── console.py    # Output helpers (ok, warn, err, info)
-│   │   └── errors.py     # Error rendering
-│   └── commands/         # Auto-discovered commands
-│       ├── hello.py
-│       └── api/
-│           └── get.py
-├── domain/
-│   └── errors.py         # AppError and domain errors
-└── infrastructure/
-    └── http_client.py    # HTTP client wrapper
-```
+## Configuration
 
-## Adding New Commands
+The default path is `~/.hterm.toml`. If it does not exist, hterm supplies a built-in `home` project rooted at `~`. See [`docs/example.hterm.toml`](docs/example.hterm.toml) for every setting and [`docs/PLAN.md`](docs/PLAN.md) for the full behavior.
 
+Minimal configuration:
 
-1. Create a new file in `cli/commands/` or a subdirectory
-2. Define `app = typer.Typer()` in the module
-3. Add commands with `@app.command()` decorator
+```toml
+version = 1
+default = "home"
 
-Example:
+[projects.home]
+cwd = "~"
+label = "home"
 
-```python
-# cli/commands/mycommand.py
-import typer
-from hterm.cli.ui.console import ok
+[projects.example]
+cwd = "~/src/example"
+aliases = ["ex"]
+keywords = ["development"]
 
-app = typer.Typer()
+[[projects.example.tabs]]
+name = "code"
+command = "pi"
+focus = true
 
-@app.command()
-def greet(name: str) -> None:
-    """Greet someone."""
-    ok(f"Hello, {name}!")
+[[projects.example.tabs]]
+name = "shell"
 ```
 
-This automatically becomes available as `hterm mycommand greet`.
+Paths expand `~` and environment variables. Project names and aliases must be unique and cannot use reserved CLI command names. Project and tab working directories must exist. At most one tab per project may set `focus = true`.
 
+## CLI
+
+```sh
+hterm --version
+hterm config path
+hterm list --json
+hterm check [PROJECT]
+hterm lifecycle install-plugin     # link the Herdr workspace-close plugin
+hterm                              # configured default project
+hterm example                      # shorthand
+hterm open example                 # canonical form
+hterm example --dry-run            # inspect the launch without side effects
+```
+
+`--config PATH`, `--json`, and `--no-focus` are supported for launches. If a Herdr workspace already has the project's label, hterm reuses it instead of running hooks or creating and configuring another workspace; with focus enabled, it focuses that workspace and returns `"reused": true`. If duplicate labels exist, hterm deterministically prefers the focused workspace, then the lowest workspace number.
+
+With focus enabled, hterm also reuses a Ghostty window whose title contains `herdr` (customizable with `settings.herdr_title_match`); if none exists, it creates a Ghostty window running `herdr session attach default` and identifies the new AeroSpace window by ID snapshot difference. Among multiple matches it prefers the focused workspace, then a visible workspace, then the lowest window ID. It focuses the exact result with `aerospace focus --window-id ID`. Presentation failures are returned as structured warnings because the Herdr workspace was still created or found successfully.
+
+JSON mode writes exactly one result envelope to stdout; expected failures exit with status 1, while invalid CLI usage exits with status 2.
+
+## Workspace post-hooks
+
+Install the bundled Herdr plugin after installing or moving the `hterm` executable:
+
+```sh
+hterm lifecycle install-plugin
+# If hterm cannot discover its own installed entry point:
+hterm lifecycle install-plugin --hterm-binary "$(command -v hterm)"
+```
+
+This links the `hterm.lifecycle` plugin, subscribes it to `workspace.closed`, and records the absolute hterm executable path in the plugin config directory. Herdr event hooks are asynchronous, so workspace closure is never held open while a post-hook runs. The same event is emitted for explicit workspace closure and natural closure after the last panes exit.
+
+Each newly created workspace writes `~/.local/state/hterm/workspaces/<workspace-id>.json` (or the equivalent under `XDG_STATE_HOME`); reusing an existing workspace does not replace its lifecycle record. On closure, the handler atomically claims the record, runs the configured post-hook once through the configured hook shell (`/bin/zsh -lc` by default), and records status, exit code, stdout, stderr, and timestamps. It supplies `HTERM_PROJECT`, `HTERM_PROJECT_DIR`, `HTERM_CONFIG_PATH`, `HTERM_WORKSPACE_ID`, `HTERM_TAB_ID`, and `HTERM_PANE_ID`.
+
+Duplicate events and canceled rollback records do not rerun hooks. A permanent claim marker deliberately favors at-most-once behavior: if hterm crashes or the machine shuts down after claiming a record, it will not automatically retry a hook whose side effects are unknown. Events lost during a Herdr/server crash or shutdown are also best effort.
+
+Inspect plugin registration and event-command logs with:
+
+```sh
+herdr plugin list --plugin hterm.lifecycle --json
+herdr plugin log list --plugin hterm.lifecycle
+```
+
+## Zsh completion
+
+Try completion in the current shell:
+
+```zsh
+source <(hterm completion zsh)
+```
+
+For persistent installation:
+
+```zsh
+mkdir -p ~/.zfunc
+hterm completion zsh > ~/.zfunc/_hterm
+```
+
+Ensure `~/.zfunc` is on `fpath` before initializing completion in `.zshrc`:
+
+```zsh
+fpath=(~/.zfunc $fpath)
+autoload -Uz compinit && compinit
+```
+
+Project names and aliases are queried from the active TOML file whenever completion runs, so configuration changes do not require regenerating `_hterm`. Both `hterm PROJECT` and `hterm open PROJECT` are supported.
+
+## Raycast extension
+
+The private TypeScript extension lives in [`raycast/`](raycast/). Install the CLI first, then load the extension for development with:
+
+```sh
+cd raycast
+npm install
+npm run dev
+```
+
+In its preferences, set **hterm Executable** to the absolute path printed by `command -v hterm`. The extension intentionally delegates project listing, validation, launch orchestration, and config path resolution to the CLI. See [`raycast/README.md`](raycast/README.md) for its actions and setup details.
+
+## Acceptance check
+
+After installation and configuration:
+
+```sh
+hterm --version
+hterm check
+hterm list --json
+hterm home --dry-run --json
+hterm lifecycle install-plugin --json
+```
+
+Then launch one project from the shell and from Raycast. Confirm the first launch creates and configures a Herdr workspace, while the second reuses and focuses it. Close the workspace and inspect its terminal lifecycle record under `~/.local/state/hterm/workspaces/`; a configured post-hook should have a terminal status and should not run again for a duplicate close event.
+
+Presentation checks require macOS Automation permission for the process running hterm to control Ghostty. A denied permission or unavailable AeroSpace is reported as a warning after successful workspace creation rather than losing the workspace result.
+
+Maintainers can opt into non-destructive installed-tool integration checks with `HTERM_RUN_MACOS_INTEGRATION=1 uv run pytest -m macos_integration`. The Herdr test creates and closes a temporary workspace; the AeroSpace test only lists windows.
 
 ## License
 

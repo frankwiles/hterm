@@ -42,3 +42,37 @@ jobs:
 
     - name: Build package
       run: uv build
+
+    - name: Smoke test installed wheel outside checkout
+      run: |
+        wheel=$(find "$PWD/dist" -name '*.whl' -print -quit)
+        install_root=$(mktemp -d)
+        uv venv "$install_root/venv"
+        uv pip install --python "$install_root/venv/bin/python" "$wheel"
+        cd "$install_root"
+        "$install_root/venv/bin/hterm" --version
+        "$install_root/venv/bin/hterm" list --json
+        "$install_root/venv/bin/python" -c 'from hterm.plugin import PLUGIN_ROOT; assert (PLUGIN_ROOT / "herdr-plugin.toml").is_file(); assert (PLUGIN_ROOT / "workspace-closed.sh").is_file()'
+
+  raycast:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: raycast
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+        cache: npm
+        cache-dependency-path: raycast/package-lock.json
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Lint extension
+      run: npm run lint
+
+    - name: Build and type check extension
+      run: npm run build

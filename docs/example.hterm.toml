@@ -1,0 +1,38 @@
+version = 1
+default = "home"
+
+[settings]
+herdr_binary = "/opt/homebrew/bin/herdr"
+ghostty_app = "/Applications/Ghostty.app"
+aerospace_binary = "/opt/homebrew/bin/aerospace"
+hook_shell = "/bin/zsh"
+hook_timeout_seconds = 60
+focus = true
+herdr_title_match = "herdr"
+
+[projects.home]
+description = "Home shell"
+cwd = "~"
+label = "home"
+
+[projects.example]
+description = "Example development workspace"
+cwd = "~/src/example"
+label = "example"
+aliases = ["ex"]
+keywords = ["development"]
+pre_hook = "test -d ."
+setup_hook = "echo workspace $HTERM_WORKSPACE_ID created"
+post_hook = "echo workspace closed"
+
+[[projects.example.tabs]]
+name = "code"
+command = "pi"
+focus = true
+
+[[projects.example.tabs]]
+name = "server"
+command = "uv run server"
+
+[[projects.example.tabs]]
+name = "shell"

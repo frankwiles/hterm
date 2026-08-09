@@ -11,7 +11,7 @@ sync:
 
 # Run the CLI with arguments
 run *ARGS:
-    uv run hterm 
+    uv run hterm {{ARGS}}
 
 # Run tests
 test:
@@ -52,8 +52,4 @@ pre-commit-all:
 
 # Run the CLI via uvx from a git repo (for testing distribution)
 uvx REPO *ARGS:
-    uvx --from git+ hterm 
-
-# Start a TUI development server (for textual apps)
-tui-dev:
-    uv run textual run --dev src/hterm/tui.py
+    uvx --from git+{{REPO}} hterm {{ARGS}}
