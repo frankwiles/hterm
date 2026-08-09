@@ -37,6 +37,16 @@ check: lint typecheck test
 build:
     uv build
 
+# Install the tool 
+install: 
+    uv tool install --force . 
+
+raycast-install:
+    cd raycast 
+    npm install 
+    echo "Ctrl-C to close this and it will stay installed"
+    npm run dev 
+
 # Clean build artifacts
 clean:
     rm -rf dist/ .pytest_cache/ .ruff_cache/
@@ -53,3 +63,5 @@ pre-commit-all:
 # Run the CLI via uvx from a git repo (for testing distribution)
 uvx REPO *ARGS:
     uvx --from git+{{REPO}} hterm {{ARGS}}
+
+
