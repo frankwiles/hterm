@@ -72,6 +72,61 @@ def test_loads_full_project_and_inherits_tab_cwd(tmp_path: Path) -> None:
     assert config.settings.herdr_title_match == "herdr client"
 
 
+def test_project_can_reuse_a_named_layout(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    alternate_dir = tmp_path / "logs"
+    alternate_dir.mkdir()
+    config_path = tmp_path / "hterm.toml"
+    config_path.write_text(
+        f'''version = 1
+default = "one"
+
+[[layouts.coding.tabs]]
+name = "code"
+command = "pi"
+focus = true
+
+[[layouts.coding.tabs]]
+name = "server"
+command = "uv run server"
+
+[[layouts.coding.tabs]]
+name = "logs"
+command = "tail -f app.log"
+cwd = "{alternate_dir}"
+
+[[layouts.coding.tabs]]
+name = "shell"
+
+[projects.one]
+cwd = "{project_dir}"
+layout = "coding"
+
+[projects.two]
+cwd = "{project_dir}"
+layout = "coding"
+'''
+    )
+
+    config = load_config(config_path)
+    project = config.resolve("one")
+
+    assert tuple(config.layouts) == ("coding",)
+    assert project.layout == "coding"
+    assert [tab.name for tab in project.tabs] == ["code", "server", "logs", "shell"]
+    assert [tab.command for tab in project.tabs] == [
+        "pi",
+        "uv run server",
+        "tail -f app.log",
+        None,
+    ]
+    assert project.tabs[0].cwd == project_dir
+    assert project.tabs[2].cwd == alternate_dir
+    assert project.tabs[0].focus is True
+    assert config.resolve("two").tabs == project.tabs
+
+
 def test_expands_environment_variables_in_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -103,6 +158,16 @@ cwd = "$HTERM_TEST_PROJECT"
             "[[projects.home.tabs]]\nfocus = true\n"
             "[[projects.home.tabs]]\nfocus = true",
             "more than one focused tab",
+        ),
+        (
+            "version = 1\n[projects.home]\ncwd = '~'\nlayout = 'missing'",
+            "unknown layout",
+        ),
+        (
+            "version = 1\n[[layouts.coding.tabs]]\nname = 'code'\n"
+            "[projects.home]\ncwd = '~'\nlayout = 'coding'\n"
+            "[[projects.home.tabs]]\nname = 'shell'",
+            "cannot define both layout and tabs",
         ),
     ],
 )

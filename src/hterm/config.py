@@ -37,6 +37,20 @@ class Tab:
 
 
 @dataclass(frozen=True, slots=True)
+class LayoutTab:
+    name: str | None
+    command: str | None
+    cwd: Path | None
+    focus: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Layout:
+    name: str
+    tabs: tuple[LayoutTab, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Project:
     name: str
     cwd: Path
@@ -47,6 +61,7 @@ class Project:
     pre_hook: str | None
     setup_hook: str | None
     post_hook: str | None
+    layout: str | None
     tabs: tuple[Tab, ...]
 
     def listing(self) -> dict[str, Any]:
@@ -66,6 +81,7 @@ class Config:
     version: int
     default: str
     settings: Settings
+    layouts: Mapping[str, Layout]
     projects: Mapping[str, Project]
     aliases: Mapping[str, str]
 
@@ -175,50 +191,110 @@ def _settings(data: Any, path: Path) -> Settings:
     )
 
 
-def _project(name: str, data: Any, path: Path) -> Project:
-    table = _table(data, f"projects.{name}", path)
-    cwd = _directory(table.get("cwd"), f"projects.{name}.cwd", path)
-    aliases = _strings(table.get("aliases"), f"projects.{name}.aliases", path)
-    keywords = _strings(table.get("keywords"), f"projects.{name}.keywords", path)
-    tabs_data = table.get("tabs", [])
-    if not isinstance(tabs_data, list):
+def _layout_tabs(data: Any, field: str, path: Path) -> tuple[LayoutTab, ...]:
+    if not isinstance(data, list):
         raise _error(
-            f"projects.{name}.tabs must be an array of tables",
+            f"{field} must be an array of tables",
             path=path,
-            field=f"projects.{name}.tabs",
+            field=field,
         )
 
-    tabs: list[Tab] = []
+    tabs: list[LayoutTab] = []
     focused = 0
-    for index, raw_tab in enumerate(tabs_data):
-        field = f"projects.{name}.tabs[{index}]"
-        tab = _table(raw_tab, field, path)
+    for index, raw_tab in enumerate(data):
+        tab_field = f"{field}[{index}]"
+        tab = _table(raw_tab, tab_field, path)
         tab_focus = tab.get("focus", False)
         if not isinstance(tab_focus, bool):
             raise _error(
-                f"{field}.focus must be a boolean", path=path, field=f"{field}.focus"
+                f"{tab_field}.focus must be a boolean",
+                path=path,
+                field=f"{tab_field}.focus",
             )
         focused += tab_focus
         tabs.append(
-            Tab(
-                name=_string(tab.get("name"), f"{field}.name", path, optional=True),
+            LayoutTab(
+                name=_string(tab.get("name"), f"{tab_field}.name", path, optional=True),
                 command=_string(
-                    tab.get("command"), f"{field}.command", path, optional=True
+                    tab.get("command"),
+                    f"{tab_field}.command",
+                    path,
+                    optional=True,
                 ),
                 cwd=(
-                    _directory(tab["cwd"], f"{field}.cwd", path)
+                    _directory(tab["cwd"], f"{tab_field}.cwd", path)
                     if "cwd" in tab
-                    else cwd
+                    else None
                 ),
                 focus=tab_focus,
             )
         )
     if focused > 1:
         raise _error(
-            f"Project {name!r} has more than one focused tab",
+            f"{field} has more than one focused tab",
             path=path,
-            field=f"projects.{name}.tabs.focus",
+            field=f"{field}.focus",
         )
+    return tuple(tabs)
+
+
+def _layouts(data: Any, path: Path) -> dict[str, Layout]:
+    tables = _table(data if data is not None else {}, "layouts", path)
+    layouts: dict[str, Layout] = {}
+    for name, raw_layout in tables.items():
+        if not name.strip():
+            raise _error(
+                "Layout names must be non-empty",
+                path=path,
+                field=f"layouts.{name}",
+            )
+        table = _table(raw_layout, f"layouts.{name}", path)
+        layouts[name] = Layout(
+            name=name,
+            tabs=_layout_tabs(table.get("tabs", []), f"layouts.{name}.tabs", path),
+        )
+    return layouts
+
+
+def _project(
+    name: str, data: Any, path: Path, layouts: Mapping[str, Layout]
+) -> Project:
+    table = _table(data, f"projects.{name}", path)
+    cwd = _directory(table.get("cwd"), f"projects.{name}.cwd", path)
+    aliases = _strings(table.get("aliases"), f"projects.{name}.aliases", path)
+    keywords = _strings(table.get("keywords"), f"projects.{name}.keywords", path)
+    layout_name = _string(
+        table.get("layout"), f"projects.{name}.layout", path, optional=True
+    )
+    if layout_name is not None and "tabs" in table:
+        raise _error(
+            f"Project {name!r} cannot define both layout and tabs",
+            path=path,
+            field=f"projects.{name}.layout",
+        )
+    if layout_name is not None:
+        try:
+            tab_definitions = layouts[layout_name].tabs
+        except KeyError:
+            raise _error(
+                f"Project {name!r} references unknown layout: {layout_name}",
+                path=path,
+                field=f"projects.{name}.layout",
+                layout=layout_name,
+            ) from None
+    else:
+        tab_definitions = _layout_tabs(
+            table.get("tabs", []), f"projects.{name}.tabs", path
+        )
+    tabs = tuple(
+        Tab(
+            tab.name,
+            tab.command,
+            tab.cwd if tab.cwd is not None else cwd,
+            tab.focus,
+        )
+        for tab in tab_definitions
+    )
 
     label = _string(table.get("label", name), f"projects.{name}.label", path)
     assert label is not None
@@ -243,14 +319,17 @@ def _project(name: str, data: Any, path: Path) -> Project:
         post_hook=_string(
             table.get("post_hook"), f"projects.{name}.post_hook", path, optional=True
         ),
-        tabs=tuple(tabs),
+        layout=layout_name,
+        tabs=tabs,
     )
 
 
 def _built_in(path: Path) -> Config:
     home = Path.home().resolve()
-    project = Project("home", home, "home", None, (), (), None, None, None, ())
-    return Config(path, SUPPORTED_VERSION, "home", Settings(), {"home": project}, {})
+    project = Project("home", home, "home", None, (), (), None, None, None, None, ())
+    return Config(
+        path, SUPPORTED_VERSION, "home", Settings(), {}, {"home": project}, {}
+    )
 
 
 def load_config(path: Path) -> Config:
@@ -273,6 +352,7 @@ def load_config(path: Path) -> Config:
         )
     default = _string(data.get("default", "home"), "default", path)
     assert default is not None
+    layouts = _layouts(data.get("layouts"), path)
     projects_data = _table(data.get("projects", {}), "projects", path)
     projects: dict[str, Project] = {}
     aliases: dict[str, str] = {}
@@ -288,7 +368,7 @@ def load_config(path: Path) -> Config:
             raise _error(
                 f"Duplicate project name or alias: {name}", path=path, name=name
             )
-        project = _project(name, raw_project, path)
+        project = _project(name, raw_project, path, layouts)
         projects[name] = project
         occupied.add(name)
         for alias in project.aliases:
@@ -302,7 +382,13 @@ def load_config(path: Path) -> Config:
             occupied.add(alias)
 
     config = Config(
-        path, version, default, _settings(data.get("settings"), path), projects, aliases
+        path,
+        version,
+        default,
+        _settings(data.get("settings"), path),
+        layouts,
+        projects,
+        aliases,
     )
     config.resolve()
     return config

@@ -54,6 +54,22 @@ Minimal configuration:
 version = 1
 default = "home"
 
+[[layouts.coding.tabs]]
+name = "code"
+command = "pi"
+focus = true
+
+[[layouts.coding.tabs]]
+name = "server"
+command = "uv run server"
+
+[[layouts.coding.tabs]]
+name = "git"
+command = "lazygit"
+
+[[layouts.coding.tabs]]
+name = "shell"
+
 [projects.home]
 cwd = "~"
 label = "home"
@@ -62,17 +78,12 @@ label = "home"
 cwd = "~/src/example"
 aliases = ["ex"]
 keywords = ["development"]
-
-[[projects.example.tabs]]
-name = "code"
-command = "pi"
-focus = true
-
-[[projects.example.tabs]]
-name = "shell"
+layout = "coding"
 ```
 
-Paths expand `~` and environment variables. Project names and aliases must be unique and cannot use reserved CLI command names. Project and tab working directories must exist. At most one tab per project may set `focus = true`.
+Named layouts are reusable sets of tabs. Set `layout = "coding"` on any number of projects, or continue defining project-specific `[[projects.NAME.tabs]]` entries. A project cannot specify both. Tabs without a `cwd` inherit each project's directory, so one layout can be shared across projects; an explicit layout-tab `cwd` is resolved like any other path.
+
+Paths expand `~` and environment variables. Project names and aliases must be unique and cannot use reserved CLI command names. Project and tab working directories must exist. At most one tab per project or layout may set `focus = true`.
 
 ## CLI
 

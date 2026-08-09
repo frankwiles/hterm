@@ -481,6 +481,14 @@ def test_malformed_create_response_is_protocol_error(
     assert raised.value.code == "herdr_protocol_error"
 
 
+def test_pane_run_accepts_herdr_empty_success_response() -> None:
+    runner = FakeRunner([ProcessResult((), 0, "", "")])
+
+    HerdrClient(Path("/fake/herdr"), runner).run_pane("w1:p1", "nvim")
+
+    assert runner.calls[0][0] == ("/fake/herdr", "pane", "run", "w1:p1", "nvim")
+
+
 def test_missing_herdr_binary_is_normalized(tmp_path: Path) -> None:
     config = make_config(tmp_path, "")
     runner = FakeRunner([FileNotFoundError("missing")])

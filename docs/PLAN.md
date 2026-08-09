@@ -151,14 +151,32 @@ name = "shell"
 focus = true
 ```
 
+Reusable tab sets may instead be declared and selected by a project:
+
+```toml
+[[layouts.coding.tabs]]
+name = "code"
+command = "pi"
+focus = true
+
+[[layouts.coding.tabs]]
+name = "shell"
+
+[projects.do2]
+cwd = "~/src/do2"
+layout = "coding"
+```
+
 Rules:
 
 - Expand `~` and environment variables in paths.
 - Project names and aliases are unique.
 - Reserved CLI command names are invalid project names.
-- A tab's `cwd` defaults to the project `cwd`.
+- A project may select a named layout or define its own tabs, but not both.
+- Layouts can be shared by any number of projects and unknown layout names are invalid.
+- A project or layout tab's `cwd` defaults to the project `cwd`.
 - `name`, `command`, and tab `cwd` are optional.
-- At most one tab may have `focus = true`.
+- At most one tab per project or layout may have `focus = true`.
 - With no tabs, the workspace's initial tab remains an interactive shell in project `cwd`.
 - With tabs, the first definition configures the initial tab and later definitions create new tabs.
 

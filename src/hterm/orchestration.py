@@ -266,7 +266,8 @@ class HerdrClient:
         self._json("tab", "rename", tab_id, name)
 
     def run_pane(self, pane_id: str, command: str) -> None:
-        self._json("pane", "run", pane_id, command)
+        # Herdr 0.8 returns an empty body when a command is accepted.
+        self._execute("pane", "run", pane_id, command)
 
     def focus(self, workspace_id: str, tab_id: str | None) -> None:
         if tab_id:
