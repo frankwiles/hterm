@@ -65,6 +65,7 @@ _hterm_projects() {
 
 _hterm_commands() {
   local -a commands=(
+    'add:add a project to the configuration'
     'open:open a project'
     'list:list configured projects'
     'check:validate configuration or a project'
@@ -96,6 +97,9 @@ _hterm() {
       ;;
     args)
       case "$words[2]" in
+        add)
+          _arguments '--config=[configuration file]:configuration file:_files'
+          ;;
         open)
           if (( CURRENT == 3 )); then
             _hterm_projects

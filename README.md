@@ -90,6 +90,7 @@ Paths expand `~` and environment variables. Project names and aliases must be un
 ```sh
 hterm --version
 hterm config path
+hterm add                         # interactively add the current project
 hterm list --json
 hterm check [PROJECT]
 hterm lifecycle install-plugin     # link the Herdr workspace-close plugin
@@ -98,6 +99,8 @@ hterm example                      # shorthand
 hterm open example                 # canonical form
 hterm example --dry-run            # inspect the launch without side effects
 ```
+
+`hterm add` prompts for the project name, label, working directory, and an optional existing layout, then appends the project to the configuration. It creates a missing configuration with the built-in `home` project. Pass `--config PATH` to edit another configuration.
 
 `--config PATH`, `--json`, and `--no-focus` are supported for launches. If a Herdr workspace already has the project's label, hterm reuses it instead of running hooks or creating and configuring another workspace; with focus enabled, it focuses that workspace and returns `"reused": true`. If duplicate labels exist, hterm deterministically prefers the focused workspace, then the lowest workspace number.
 

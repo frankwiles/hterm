@@ -115,6 +115,67 @@ def test_reserved_command_is_not_project_shorthand(monkeypatch) -> None:
     assert called is False
 
 
+def test_add_creates_config_and_prompts_for_project_fields(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project_dir = tmp_path / "demo"
+    project_dir.mkdir()
+    monkeypatch.chdir(project_dir)
+    config_path = tmp_path / "hterm.toml"
+
+    result = runner.invoke(
+        app,
+        ["add", "--config", str(config_path)],
+        input="\nDemo Workspace\n\n0\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    contents = config_path.read_text()
+    assert '[projects."home"]' not in contents
+    assert "[projects.home]" in contents
+    assert '[projects."demo"]' in contents
+    assert f'cwd = "{project_dir}"' in contents
+    assert 'label = "Demo Workspace"' in contents
+    assert "layout =" not in contents
+    assert "Added project 'demo'" in result.stdout
+
+
+def test_add_reprompts_for_duplicate_name_and_selects_layout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project_dir = tmp_path / "demo"
+    project_dir.mkdir()
+    monkeypatch.chdir(project_dir)
+    config_path = tmp_path / "hterm.toml"
+    config_path.write_text(
+        f'''version = 1
+default = "home"
+
+[[layouts.coding.tabs]]
+name = "shell"
+
+[projects.home]
+cwd = "~"
+
+[projects.demo]
+cwd = "{project_dir}"
+'''
+    )
+
+    result = runner.invoke(
+        app,
+        ["add", "--config", str(config_path)],
+        input="\nfresh\n\n\n1\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "already used or reserved" in result.output
+    contents = config_path.read_text()
+    assert '[projects."fresh"]' in contents
+    assert 'label = "fresh"' in contents
+    assert 'layout = "coding"' in contents
+
+
 def test_invalid_usage_exits_two() -> None:
     result = runner.invoke(app, ["open", "one", "two"])
     assert result.exit_code == 2

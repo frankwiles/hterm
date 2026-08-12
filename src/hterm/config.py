@@ -13,7 +13,7 @@ from hterm.errors import ConfigurationError
 
 SUPPORTED_VERSION = 1
 RESERVED_NAMES = frozenset(
-    {"open", "list", "check", "completion", "config", "lifecycle"}
+    {"add", "open", "list", "check", "completion", "config", "lifecycle"}
 )
 
 

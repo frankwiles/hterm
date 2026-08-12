@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,7 +19,7 @@ from hterm.completion import (
     project_completion_lines,
 )
 from hterm.config import Config, load_config
-from hterm.errors import HtermError
+from hterm.errors import ConfigurationError, HtermError
 from hterm.lifecycle import workspace_closed
 from hterm.orchestration import dry_run_result, orchestrate
 from hterm.output import emit_error, emit_success
@@ -25,8 +27,16 @@ from hterm.plugin import install_lifecycle_plugin
 
 DEFAULT_CONFIG_PATH = Path("~/.hterm.toml")
 RESERVED_COMMANDS = frozenset(
-    {"open", "list", "check", "completion", "config", "lifecycle"}
+    {"add", "open", "list", "check", "completion", "config", "lifecycle"}
 )
+
+_INITIAL_CONFIG = """version = 1
+default = "home"
+
+[projects.home]
+cwd = "~"
+label = "home"
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +164,103 @@ def main(
             dry_run=dry_run,
             no_focus=no_focus,
         )
+
+
+def _prompt_nonempty(prompt: str, *, default: str) -> str:
+    """Prompt until a non-empty value is entered."""
+    while True:
+        value = typer.prompt(prompt, default=default).strip()
+        if value:
+            return value
+        typer.echo(f"{prompt} cannot be empty.", err=True)
+
+
+def _prompt_project_name(config: Config, *, default: str) -> str:
+    occupied = set(config.projects) | set(config.aliases) | set(RESERVED_COMMANDS)
+    while True:
+        name = _prompt_nonempty("Name", default=default)
+        if name not in occupied:
+            return name
+        typer.echo(f"Project name {name!r} is already used or reserved.", err=True)
+
+
+def _prompt_directory(*, default: Path) -> Path:
+    while True:
+        value = _prompt_nonempty("Working directory", default=str(default))
+        expanded = Path(os.path.expandvars(value)).expanduser()
+        if not expanded.is_absolute():
+            expanded = Path.cwd() / expanded
+        directory = expanded.resolve(strict=False)
+        if directory.is_dir():
+            return directory
+        typer.echo(f"Directory does not exist: {directory}", err=True)
+
+
+def _prompt_layout(config: Config) -> str | None:
+    layouts = list(config.layouts)
+    typer.echo("Layout:")
+    typer.echo("  0. None")
+    for index, layout in enumerate(layouts, start=1):
+        typer.echo(f"  {index}. {layout}")
+    selection = typer.prompt(
+        "Layout",
+        default=0,
+        type=click.IntRange(0, len(layouts)),
+    )
+    return None if selection == 0 else layouts[selection - 1]
+
+
+def _project_toml(name: str, cwd: Path, label: str, layout: str | None) -> str:
+    def quote(value: str) -> str:
+        return json.dumps(value, ensure_ascii=False)
+
+    lines = [
+        f"[projects.{quote(name)}]",
+        f"cwd = {quote(str(cwd))}",
+        f"label = {quote(label)}",
+    ]
+    if layout is not None:
+        lines.append(f"layout = {quote(layout)}")
+    return "\n".join(lines) + "\n"
+
+
+@app.command("add")
+def add_project(
+    config: Path = typer.Option(
+        DEFAULT_CONFIG_PATH, "--config", help="TOML config path."
+    ),
+) -> None:
+    """Interactively append a project to the configuration."""
+    path = _config_path(config)
+    loaded = _load_or_exit(path, json_output=False)
+    current_directory = Path.cwd().resolve()
+    name = _prompt_project_name(loaded, default=current_directory.name or "project")
+    label = _prompt_nonempty("Label", default=name)
+    cwd = _prompt_directory(default=current_directory)
+    layout = _prompt_layout(loaded)
+
+    existing = path.read_text() if path.exists() else _INITIAL_CONFIG
+    separator = (
+        ""
+        if existing.endswith("\n\n")
+        else ("\n" if existing.endswith("\n") else "\n\n")
+    )
+    contents = existing + separator + _project_toml(name, cwd, label, layout)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(contents)
+        load_config(path)
+    except (OSError, HtermError) as error:
+        if isinstance(error, HtermError):
+            failure = error
+        else:
+            failure = ConfigurationError(
+                f"Unable to write configuration: {error}", path=str(path)
+            )
+        emit_error(failure, json_output=False)
+        raise typer.Exit(failure.exit_code) from error
+
+    typer.echo(f"Added project {name!r} to {path}")
 
 
 @app.command("open")
