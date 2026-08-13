@@ -23,11 +23,11 @@ from hterm.errors import ConfigurationError, HtermError
 from hterm.lifecycle import workspace_closed
 from hterm.orchestration import dry_run_result, orchestrate
 from hterm.output import emit_error, emit_success
-from hterm.plugin import install_lifecycle_plugin
+from hterm.plugin import install_finder_plugin, install_lifecycle_plugin
 
 DEFAULT_CONFIG_PATH = Path("~/.hterm.toml")
 RESERVED_COMMANDS = frozenset(
-    {"add", "open", "list", "check", "completion", "config", "lifecycle"}
+    {"add", "open", "list", "check", "completion", "config", "finder", "lifecycle"}
 )
 
 _INITIAL_CONFIG = """version = 1
@@ -291,6 +291,25 @@ def _load_or_exit(path: Path, *, json_output: bool) -> Config:
         raise typer.Exit(error.exit_code) from error
 
 
+def _finder_field(value: str) -> str:
+    """Keep one fzf candidate on one tab-delimited line."""
+    return " ".join(value.replace("\t", " ").splitlines()).strip()
+
+
+def _finder_lines(config: Config) -> list[str]:
+    lines: list[str] = []
+    for project in config.projects.values():
+        details = [project.description or str(project.cwd)]
+        if project.label != project.name:
+            details.append(project.label)
+        if project.aliases:
+            details.append(f"aliases: {', '.join(project.aliases)}")
+        if project.keywords:
+            details.append(f"keywords: {', '.join(project.keywords)}")
+        lines.append(f"{project.name}\t{_finder_field(' · '.join(details))}")
+    return lines
+
+
 @app.command("list")
 def list_projects(
     json_output: bool = typer.Option(False, "--json", help="Emit one JSON result."),
@@ -299,6 +318,7 @@ def list_projects(
     ),
     completion_data: bool = typer.Option(False, "--completion-data", hidden=True),
     completion_aliases: bool = typer.Option(False, "--completion-aliases", hidden=True),
+    finder_data: bool = typer.Option(False, "--finder-data", hidden=True),
 ) -> None:
     """List configured projects."""
     loaded = _load_or_exit(config, json_output=json_output)
@@ -307,6 +327,9 @@ def list_projects(
         return
     if completion_aliases:
         typer.echo("\n".join(project_alias_lines(loaded)))
+        return
+    if finder_data:
+        typer.echo("\n".join(_finder_lines(loaded)))
         return
     projects = [project.listing() for project in loaded.projects.values()]
     human = "\n".join(
@@ -367,6 +390,48 @@ def show_config_path(
         {"path": str(path)},
         json_output=json_output,
         human_message=str(path),
+    )
+
+
+finder_app = typer.Typer(help="Install the Herdr fzf project finder.")
+app.add_typer(finder_app, name="finder")
+
+
+@finder_app.command("install-plugin")
+def finder_install_plugin(
+    config: Path = typer.Option(
+        DEFAULT_CONFIG_PATH, "--config", help="TOML config path."
+    ),
+    hterm_binary: Path | None = typer.Option(
+        None,
+        "--hterm-binary",
+        help="Absolute hterm executable path if it cannot be auto-detected.",
+    ),
+    fzf_binary: Path | None = typer.Option(
+        None,
+        "--fzf-binary",
+        help="Absolute fzf executable path if it cannot be auto-detected.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit one JSON result."),
+) -> None:
+    """Link and configure the bundled Herdr fzf picker plugin."""
+    loaded = _load_or_exit(config, json_output=json_output)
+    try:
+        data = install_finder_plugin(
+            loaded, hterm_binary=hterm_binary, fzf_binary=fzf_binary
+        )
+    except HtermError as error:
+        emit_error(error, json_output=json_output)
+        raise typer.Exit(error.exit_code) from error
+    message = (
+        f"Installed Herdr plugin {data['plugin_id']}. Add this to your Herdr config "
+        f"and reload it:\n\n{data['keybinding']}"
+    )
+    emit_success(
+        "install-finder-plugin",
+        data,
+        json_output=json_output,
+        human_message=message,
     )
 
 

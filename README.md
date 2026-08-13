@@ -10,6 +10,7 @@
 - Herdr 0.8+
 - Ghostty 1.3+ with `macos-applescript` enabled
 - AeroSpace 0.20+
+- [fzf](https://github.com/junegunn/fzf) (for the optional Herdr project finder)
 
 ## Installation
 
@@ -94,6 +95,7 @@ hterm add                         # interactively add the current project
 hterm list --json
 hterm check [PROJECT]
 hterm lifecycle install-plugin     # link the Herdr workspace-close plugin
+hterm finder install-plugin        # link the Herdr fzf project finder
 hterm                              # configured default project
 hterm example                      # shorthand
 hterm open example                 # canonical form
@@ -107,6 +109,42 @@ hterm example --dry-run            # inspect the launch without side effects
 With focus enabled, hterm also reuses a Ghostty window whose title contains `herdr` (customizable with `settings.herdr_title_match`); if none exists, it creates a Ghostty window running `herdr session attach default` and identifies the new AeroSpace window by ID snapshot difference. Among multiple matches it prefers the focused workspace, then a visible workspace, then the lowest window ID. It focuses the exact result with `aerospace focus --window-id ID`. Presentation failures are returned as structured warnings because the Herdr workspace was still created or found successfully.
 
 JSON mode writes exactly one result envelope to stdout; expected failures exit with status 1, while invalid CLI usage exits with status 2.
+
+## Herdr fzf project finder
+
+Install the bundled finder plugin after installing `hterm` and `fzf`:
+
+```sh
+hterm finder install-plugin
+```
+
+The command links the `hterm.finder` plugin and records absolute paths for `hterm`, `fzf`, and the active hterm config so it remains reliable in Herdr's reduced plugin environment. Add the keybinding it prints to `~/.config/herdr/config.toml` (or use this default):
+
+```toml
+[[keys.command]]
+key = "prefix+f"
+type = "plugin_action"
+command = "hterm.finder.open"
+description = "find an hterm project"
+```
+
+Then apply it with `herdr server reload-config`. Press `prefix+f` to open an 80% × 70% modal popup, type to filter project names, descriptions, labels, aliases, keywords, and paths, and press Enter to launch the selected project. Escape closes the popup without changing the current workspace.
+
+If either executable cannot be discovered during setup, provide it explicitly:
+
+```sh
+hterm finder install-plugin \
+  --hterm-binary "$(command -v hterm)" \
+  --fzf-binary "$(command -v fzf)"
+```
+
+Inspect registration and action logs with:
+
+```sh
+herdr plugin list --plugin hterm.finder --json
+herdr plugin action list --plugin hterm.finder
+herdr plugin log list --plugin hterm.finder
+```
 
 ## Workspace post-hooks
 
@@ -177,6 +215,7 @@ hterm check
 hterm list --json
 hterm home --dry-run --json
 hterm lifecycle install-plugin --json
+hterm finder install-plugin --json
 ```
 
 Then launch one project from the shell and from Raycast. Confirm the first launch creates and configures a Herdr workspace, while the second reuses and focuses it. Close the workspace and inspect its terminal lifecycle record under `~/.local/state/hterm/workspaces/`; a configured post-hook should have a terminal status and should not run again for a duplicate close event.

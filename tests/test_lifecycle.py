@@ -13,7 +13,13 @@ from typer.testing import CliRunner
 from hterm.cli.app import app
 from hterm.config import load_config
 from hterm.lifecycle import LifecycleStore, workspace_closed
-from hterm.plugin import PLUGIN_ID, install_lifecycle_plugin
+from hterm.plugin import (
+    FINDER_KEYBINDING,
+    FINDER_PLUGIN_ID,
+    PLUGIN_ID,
+    install_finder_plugin,
+    install_lifecycle_plugin,
+)
 from hterm.process import ProcessResult
 
 
@@ -222,6 +228,123 @@ def test_install_plugin_links_and_writes_absolute_hterm_path(tmp_path: Path) -> 
         "config-dir",
         PLUGIN_ID,
     )
+
+
+def test_install_finder_plugin_persists_tools_config_and_keybinding(
+    tmp_path: Path,
+) -> None:
+    config = config_with_hook(tmp_path)
+    executable = tmp_path / "bin" / "hterm"
+    fzf = tmp_path / "bin" / "fzf"
+    executable.parent.mkdir()
+    for binary in (executable, fzf):
+        binary.write_text("#!/bin/sh\n")
+        binary.chmod(0o755)
+    plugin_config = tmp_path / "finder-config"
+    runner = FakeRunner(
+        [
+            ProcessResult((), 0, "linked\n", ""),
+            ProcessResult((), 0, f"{plugin_config}\n", ""),
+        ]
+    )
+
+    installed = install_finder_plugin(
+        config,
+        hterm_binary=executable,
+        fzf_binary=fzf,
+        runner=runner,
+    )
+
+    assert installed["plugin_id"] == FINDER_PLUGIN_ID
+    assert installed["keybinding"] == FINDER_KEYBINDING
+    assert (plugin_config / "hterm-path").read_text() == f"{executable.resolve()}\n"
+    assert (plugin_config / "fzf-path").read_text() == f"{fzf.resolve()}\n"
+    assert (plugin_config / "config-path").read_text() == f"{config.path}\n"
+    assert runner.calls[0][0][0:3] == (
+        "/fake/herdr",
+        "plugin",
+        "link",
+    )
+    assert runner.calls[1][0] == (
+        "/fake/herdr",
+        "plugin",
+        "config-dir",
+        FINDER_PLUGIN_ID,
+    )
+
+
+def test_finder_action_opens_popup_entrypoint(tmp_path: Path) -> None:
+    args_file = tmp_path / "args"
+    herdr = tmp_path / "herdr"
+    herdr.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{args_file}"\n')
+    herdr.chmod(0o755)
+    script = Path(__file__).parents[1] / "src/hterm/finder_plugin/open-picker.sh"
+
+    completed = subprocess.run(
+        ("/bin/sh", str(script)),
+        env={
+            **os.environ,
+            "HERDR_BIN_PATH": str(herdr),
+            "HERDR_PLUGIN_ID": FINDER_PLUGIN_ID,
+        },
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert args_file.read_text().splitlines() == [
+        "plugin",
+        "pane",
+        "open",
+        "--plugin",
+        FINDER_PLUGIN_ID,
+        "--entrypoint",
+        "picker",
+        "--placement",
+        "popup",
+        "--width",
+        "80%",
+        "--height",
+        "70%",
+    ]
+
+
+def test_finder_picker_filters_and_opens_selected_project(tmp_path: Path) -> None:
+    plugin_config = tmp_path / "plugin-config"
+    plugin_config.mkdir()
+    hterm = tmp_path / "hterm"
+    fzf = tmp_path / "fzf"
+    args_file = tmp_path / "open-args"
+    hterm.write_text(
+        f'''#!/bin/sh
+if [ "$1" = list ]; then
+  printf 'alpha\\tFirst project\\nbeta\\tSecond project\\n'
+else
+  printf '%s\\n' "$@" > "{args_file}"
+fi
+'''
+    )
+    fzf.write_text("#!/bin/sh\ngrep '^beta'")
+    for binary in (hterm, fzf):
+        binary.chmod(0o755)
+    (plugin_config / "hterm-path").write_text(f"{hterm}\n")
+    (plugin_config / "fzf-path").write_text(f"{fzf}\n")
+    config_path = tmp_path / "hterm.toml"
+    (plugin_config / "config-path").write_text(f"{config_path}\n")
+    script = Path(__file__).parents[1] / "src/hterm/finder_plugin/picker.sh"
+
+    completed = subprocess.run(
+        ("/bin/sh", str(script)),
+        env={**os.environ, "HERDR_PLUGIN_CONFIG_DIR": str(plugin_config)},
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert args_file.read_text().splitlines() == [
+        "open",
+        "beta",
+        "--config",
+        str(config_path),
+    ]
 
 
 def test_plugin_adapter_delegates_event_workspace_id(tmp_path: Path) -> None:

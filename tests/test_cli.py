@@ -99,6 +99,31 @@ def test_human_failure_uses_stderr(monkeypatch) -> None:
     assert "Herdr is unavailable" in result.stderr
 
 
+def test_finder_data_includes_searchable_project_metadata(tmp_path: Path) -> None:
+    project_dir = tmp_path / "demo"
+    project_dir.mkdir()
+    config = tmp_path / "hterm.toml"
+    config.write_text(
+        f'''version = 1
+default = "demo"
+[projects.demo]
+cwd = "{project_dir}"
+label = "Demo Workspace"
+description = "Build the app"
+aliases = ["d"]
+keywords = ["python", "development"]
+'''
+    )
+
+    result = runner.invoke(app, ["list", "--config", str(config), "--finder-data"])
+
+    assert result.exit_code == 0
+    assert result.stdout == (
+        "demo\tBuild the app · Demo Workspace · aliases: d · "
+        "keywords: python, development\n"
+    )
+
+
 def test_reserved_command_is_not_project_shorthand(monkeypatch) -> None:
     called = False
 

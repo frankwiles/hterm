@@ -1,4 +1,4 @@
-"""Installation support for the bundled Herdr lifecycle plugin."""
+"""Installation support for the bundled Herdr plugins."""
 
 from __future__ import annotations
 
@@ -15,20 +15,28 @@ from hterm.process import ProcessRunner, SubprocessRunner
 
 PLUGIN_ID = "hterm.lifecycle"
 PLUGIN_ROOT = Path(__file__).parent / "herdr_plugin"
+FINDER_PLUGIN_ID = "hterm.finder"
+FINDER_PLUGIN_ROOT = Path(__file__).parent / "finder_plugin"
+
+FINDER_KEYBINDING = """[[keys.command]]
+key = "prefix+f"
+type = "plugin_action"
+command = "hterm.finder.open"
+description = "find an hterm project"
+"""
 
 
-def current_hterm_executable(explicit: Path | None = None) -> Path:
-    """Resolve the executable path persisted for Herdr's reduced environment."""
-    candidates: list[Path] = []
-    if explicit is not None:
-        candidates.append(explicit.expanduser())
-    argv_path = Path(sys.argv[0]).expanduser()
-    if argv_path.name == "hterm":
-        candidates.append(argv_path)
-    discovered = shutil.which("hterm")
+def _current_executable(
+    name: str,
+    explicit: Path | None,
+    *,
+    candidates: tuple[Path, ...] = (),
+) -> Path:
+    paths = ([explicit.expanduser()] if explicit is not None else []) + list(candidates)
+    discovered = shutil.which(name)
     if discovered:
-        candidates.append(Path(discovered))
-    for candidate in candidates:
+        paths.append(Path(discovered))
+    for candidate in paths:
         resolved = candidate.resolve(strict=False)
         if (
             resolved.is_absolute()
@@ -36,10 +44,23 @@ def current_hterm_executable(explicit: Path | None = None) -> Path:
             and os.access(resolved, os.X_OK)
         ):
             return resolved
+    option = f"--{name}-binary"
     raise HtermError(
-        "hterm_executable_not_found",
-        "Unable to find the hterm executable; pass --hterm-binary with its absolute path",
+        f"{name}_executable_not_found",
+        f"Unable to find the {name} executable; pass {option} with its absolute path",
     )
+
+
+def current_hterm_executable(explicit: Path | None = None) -> Path:
+    """Resolve the executable path persisted for Herdr's reduced environment."""
+    argv_path = Path(sys.argv[0]).expanduser()
+    argv_candidates = (argv_path,) if argv_path.name == "hterm" else ()
+    return _current_executable("hterm", explicit, candidates=argv_candidates)
+
+
+def current_fzf_executable(explicit: Path | None = None) -> Path:
+    """Resolve fzf now so the plugin does not depend on Herdr's PATH."""
+    return _current_executable("fzf", explicit)
 
 
 def _run_herdr(
@@ -69,16 +90,15 @@ def _run_herdr(
     return result.stdout.strip()
 
 
-def install_lifecycle_plugin(
+def _install_plugin(
     config: Config,
     *,
-    hterm_binary: Path | None = None,
-    runner: ProcessRunner | None = None,
+    plugin_id: str,
+    plugin_root: Path,
+    files: dict[str, str],
+    runner: ProcessRunner,
 ) -> dict[str, Any]:
-    """Link the bundled plugin and persist the exact hterm executable path."""
-    active_runner = runner or SubprocessRunner()
-    executable = current_hterm_executable(hterm_binary)
-    manifest = PLUGIN_ROOT / "herdr-plugin.toml"
+    manifest = plugin_root / "herdr-plugin.toml"
     if not manifest.is_file():
         raise HtermError(
             "plugin_package_missing", f"Bundled Herdr plugin is missing: {manifest}"
@@ -86,13 +106,13 @@ def install_lifecycle_plugin(
 
     _run_herdr(
         config.settings.herdr_binary,
-        ("plugin", "link", str(PLUGIN_ROOT), "--enabled"),
-        runner=active_runner,
+        ("plugin", "link", str(plugin_root)),
+        runner=runner,
     )
     config_dir_text = _run_herdr(
         config.settings.herdr_binary,
-        ("plugin", "config-dir", PLUGIN_ID),
-        runner=active_runner,
+        ("plugin", "config-dir", plugin_id),
+        runner=runner,
     )
     if not config_dir_text:
         raise HtermError(
@@ -101,19 +121,66 @@ def install_lifecycle_plugin(
     config_dir = Path(config_dir_text).expanduser().resolve(strict=False)
     try:
         config_dir.mkdir(parents=True, exist_ok=True)
-        path_file = config_dir / "hterm-path"
-        temporary = config_dir / f".hterm-path.{os.getpid()}.tmp"
-        temporary.write_text(f"{executable}\n")
-        temporary.replace(path_file)
+        for name, contents in files.items():
+            destination = config_dir / name
+            temporary = config_dir / f".{name}.{os.getpid()}.tmp"
+            temporary.write_text(contents)
+            temporary.replace(destination)
     except OSError as exc:
         raise HtermError(
             "plugin_configuration_failed",
-            f"Unable to configure the Herdr lifecycle plugin: {exc}",
-            {"config_dir": str(config_dir)},
+            f"Unable to configure the Herdr plugin: {exc}",
+            {"plugin_id": plugin_id, "config_dir": str(config_dir)},
         ) from exc
     return {
-        "plugin_id": PLUGIN_ID,
-        "plugin_root": str(PLUGIN_ROOT),
+        "plugin_id": plugin_id,
+        "plugin_root": str(plugin_root),
         "plugin_config_dir": str(config_dir),
-        "hterm_binary": str(executable),
     }
+
+
+def install_lifecycle_plugin(
+    config: Config,
+    *,
+    hterm_binary: Path | None = None,
+    runner: ProcessRunner | None = None,
+) -> dict[str, Any]:
+    """Link the lifecycle plugin and persist the exact hterm executable path."""
+    executable = current_hterm_executable(hterm_binary)
+    result = _install_plugin(
+        config,
+        plugin_id=PLUGIN_ID,
+        plugin_root=PLUGIN_ROOT,
+        files={"hterm-path": f"{executable}\n"},
+        runner=runner or SubprocessRunner(),
+    )
+    result["hterm_binary"] = str(executable)
+    return result
+
+
+def install_finder_plugin(
+    config: Config,
+    *,
+    hterm_binary: Path | None = None,
+    fzf_binary: Path | None = None,
+    runner: ProcessRunner | None = None,
+) -> dict[str, Any]:
+    """Link the fzf popup plugin and persist every external path it needs."""
+    executable = current_hterm_executable(hterm_binary)
+    fzf = current_fzf_executable(fzf_binary)
+    result = _install_plugin(
+        config,
+        plugin_id=FINDER_PLUGIN_ID,
+        plugin_root=FINDER_PLUGIN_ROOT,
+        files={
+            "hterm-path": f"{executable}\n",
+            "fzf-path": f"{fzf}\n",
+            "config-path": f"{config.path}\n",
+        },
+        runner=runner or SubprocessRunner(),
+    )
+    result["hterm_binary"] = str(executable)
+    result["fzf_binary"] = str(fzf)
+    result["config_path"] = str(config.path)
+    result["keybinding"] = FINDER_KEYBINDING
+    return result

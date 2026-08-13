@@ -71,6 +71,7 @@ _hterm_commands() {
     'check:validate configuration or a project'
     'completion:generate shell completion code'
     'config:inspect configuration'
+    'finder:install the Herdr fzf project finder'
     'lifecycle:install the Herdr lifecycle plugin'
   )
   _describe -t commands 'command' commands
@@ -129,6 +130,16 @@ _hterm() {
             _values 'config command' path
           else
             _arguments '--config=[configuration file]:configuration file:_files' \
+              '--json[emit one JSON result]'
+          fi
+          ;;
+        finder)
+          if (( CURRENT == 3 )); then
+            _values 'finder command' install-plugin
+          else
+            _arguments '--config=[configuration file]:configuration file:_files' \
+              '--hterm-binary=[absolute hterm executable]:executable:_files' \
+              '--fzf-binary=[absolute fzf executable]:executable:_files' \
               '--json[emit one JSON result]'
           fi
           ;;
