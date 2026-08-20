@@ -21,13 +21,23 @@ from hterm.completion import (
 from hterm.config import Config, load_config
 from hterm.errors import ConfigurationError, HtermError
 from hterm.lifecycle import workspace_closed
-from hterm.orchestration import dry_run_result, orchestrate
+from hterm.orchestration import dry_run_result, fix_focused_workspace, orchestrate
 from hterm.output import emit_error, emit_success
 from hterm.plugin import install_finder_plugin, install_lifecycle_plugin
 
 DEFAULT_CONFIG_PATH = Path("~/.hterm.toml")
 RESERVED_COMMANDS = frozenset(
-    {"add", "open", "list", "check", "completion", "config", "finder", "lifecycle"}
+    {
+        "add",
+        "open",
+        "fix",
+        "list",
+        "check",
+        "completion",
+        "config",
+        "finder",
+        "lifecycle",
+    }
 )
 
 _INITIAL_CONFIG = """version = 1
@@ -280,6 +290,43 @@ def open_project(
         json_output=json_output,
         dry_run=dry_run,
         no_focus=no_focus,
+    )
+
+
+@app.command("fix")
+def fix_workspace(
+    layout: str | None = typer.Option(
+        None, "--layout", help="Named layout (defaults to settings.fix_layout)."
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Close tabs that are not part of the layout."
+    ),
+    config: Path = typer.Option(
+        DEFAULT_CONFIG_PATH, "--config", help="TOML config path."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit one JSON result."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Plan without side effects."),
+) -> None:
+    """Reconcile the currently focused Herdr workspace with a named layout."""
+    loaded = _load_or_exit(config, json_output=json_output)
+    try:
+        data = fix_focused_workspace(
+            loaded, layout_name=layout, force=force, dry_run=dry_run
+        ).to_dict()
+    except HtermError as error:
+        emit_error(error, json_output=json_output)
+        raise typer.Exit(error.exit_code) from error
+    selected = data["layout"]
+    verb = "Would fix" if dry_run else "Fixed"
+    extras = len(data["retained_extras"])
+    suffix = (
+        f"; retained {extras} extra tab(s) (use --force to close)" if extras else ""
+    )
+    emit_success(
+        "fix",
+        data,
+        json_output=json_output,
+        human_message=f"{verb} workspace {data['workspace_id']} with layout {selected!r}{suffix}",
     )
 
 

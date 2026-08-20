@@ -9,6 +9,7 @@ hook_shell = "/bin/zsh"
 hook_timeout_seconds = 60
 focus = true
 herdr_title_match = "herdr"
+fix_layout = "coding"
 
 # Layouts are reusable by any project. Tabs without cwd inherit the project cwd.
 [[layouts.coding.tabs]]

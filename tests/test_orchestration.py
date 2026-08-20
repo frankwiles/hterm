@@ -12,7 +12,12 @@ import pytest
 
 from hterm.config import load_config
 from hterm.errors import HtermError
-from hterm.orchestration import HerdrClient, LifecycleStore, orchestrate
+from hterm.orchestration import (
+    HerdrClient,
+    LifecycleStore,
+    fix_focused_workspace,
+    orchestrate,
+)
 from hterm.presentation import GhosttyPresenter, PresentationResult
 from hterm.process import ProcessResult
 
@@ -65,9 +70,32 @@ def no_workspaces() -> ProcessResult:
 
 
 def workspaces(*items: dict[str, Any]) -> ProcessResult:
-    return response(
-        {"result": {"type": "workspace_list", "workspaces": list(items)}}
-    )
+    return response({"result": {"type": "workspace_list", "workspaces": list(items)}})
+
+
+def focused_workspace(
+    *,
+    workspace: str = "w1",
+    label: str = "Demo",
+    checkout_path: Path | None = None,
+    repo_root: Path | None = None,
+) -> ProcessResult:
+    item: dict[str, Any] = {
+        "workspace_id": workspace,
+        "label": label,
+        "number": 1,
+        "focused": True,
+    }
+    if checkout_path is not None:
+        item["worktree"] = {
+            "checkout_path": str(checkout_path),
+            "repo_root": str(repo_root or checkout_path),
+        }
+    return workspaces(item)
+
+
+def tabs(*items: dict[str, Any]) -> ProcessResult:
+    return response({"result": {"type": "tab_list", "tabs": list(items)}})
 
 
 def workspace_created(workspace: str = "w1") -> ProcessResult:
@@ -121,6 +149,136 @@ label = "Demo"
 '''
     )
     return load_config(path)
+
+
+def make_fix_config(tmp_path: Path) -> tuple[Any, Path, Path]:
+    project = tmp_path / "project"
+    project.mkdir()
+    checkout = tmp_path / "worktree"
+    checkout.mkdir()
+    path = tmp_path / "hterm.toml"
+    path.write_text(
+        f'''version = 1
+default = "demo"
+[settings]
+herdr_binary = "/fake/herdr"
+fix_layout = "coding"
+
+[[layouts.coding.tabs]]
+name = "code"
+command = "pi"
+focus = true
+
+[[layouts.coding.tabs]]
+name = "shell"
+
+[projects.demo]
+cwd = "{project}"
+label = "Demo"
+'''
+    )
+    return load_config(path), project, checkout
+
+
+def test_fix_preserves_matching_tabs_and_uses_linked_worktree_cwd(
+    tmp_path: Path,
+) -> None:
+    config, project, checkout = make_fix_config(tmp_path)
+    runner = FakeRunner(
+        [
+            focused_workspace(checkout_path=checkout, repo_root=project),
+            tabs(
+                {
+                    "tab_id": "w1:t1",
+                    "label": "code",
+                    "number": 1,
+                    "focused": True,
+                },
+                {"tab_id": "w1:t9", "label": "logs", "number": 2},
+            ),
+            tab_created(),
+            ok(),
+        ]
+    )
+
+    result = fix_focused_workspace(config, runner=runner)
+
+    assert result.project == "demo"
+    assert result.cwd == checkout
+    assert [tab.tab_id for tab in result.kept] == ["w1:t1"]
+    assert [tab.name for tab in result.created] == ["shell"]
+    assert [tab.tab_id for tab in result.retained_extras] == ["w1:t9"]
+    assert result.closed == ()
+    assert [call[0][1:] for call in runner.calls] == [
+        ("workspace", "list"),
+        ("tab", "list", "--workspace", "w1"),
+        (
+            "tab",
+            "create",
+            "--workspace",
+            "w1",
+            "--cwd",
+            str(checkout),
+            "--no-focus",
+            "--label",
+            "shell",
+        ),
+        ("tab", "focus", "w1:t1"),
+    ]
+
+
+def test_fix_force_closes_extras_and_focuses_configured_tab(tmp_path: Path) -> None:
+    config, project, checkout = make_fix_config(tmp_path)
+    runner = FakeRunner(
+        [
+            focused_workspace(checkout_path=checkout, repo_root=project),
+            tabs(
+                {"tab_id": "w1:t1", "label": "code", "number": 1},
+                {"tab_id": "w1:t2", "label": "shell", "number": 2},
+                {"tab_id": "w1:t3", "label": "extra", "number": 3},
+            ),
+            ok(),
+            ok(),
+        ]
+    )
+
+    result = fix_focused_workspace(config, force=True, runner=runner)
+
+    assert result.created == ()
+    assert [tab.tab_id for tab in result.closed] == ["w1:t3"]
+    assert result.focused_tab_id == "w1:t1"
+    assert [call[0][1:] for call in runner.calls[-2:]] == [
+        ("tab", "focus", "w1:t1"),
+        ("tab", "close", "w1:t3"),
+    ]
+
+
+def test_fix_dry_run_reports_plan_without_mutating(tmp_path: Path) -> None:
+    config, project, checkout = make_fix_config(tmp_path)
+    runner = FakeRunner(
+        [
+            focused_workspace(checkout_path=checkout, repo_root=project),
+            tabs({"tab_id": "w1:t9", "label": "extra", "number": 1}),
+        ]
+    )
+
+    result = fix_focused_workspace(config, force=True, dry_run=True, runner=runner)
+
+    assert result.dry_run is True
+    assert result.missing == ("code", "shell")
+    assert [tab.tab_id for tab in result.closed] == ["w1:t9"]
+    assert len(runner.calls) == 2
+
+
+def test_fix_rejects_unknown_layout_before_contacting_herdr(tmp_path: Path) -> None:
+    config, _, _ = make_fix_config(tmp_path)
+    runner = FakeRunner([])
+
+    with pytest.raises(HtermError) as raised:
+        fix_focused_workspace(config, layout_name="ops", runner=runner)
+
+    assert raised.value.code == "layout_not_found"
+    assert runner.calls == []
 
 
 def test_success_configures_tabs_hooks_focus_and_lifecycle(tmp_path: Path) -> None:
@@ -292,9 +450,7 @@ def test_existing_workspace_is_not_focused_with_no_focus(tmp_path: Path) -> None
     runner = FakeRunner(
         [
             server_running(),
-            workspaces(
-                {"workspace_id": "w7", "label": "Demo", "number": 1}
-            ),
+            workspaces({"workspace_id": "w7", "label": "Demo", "number": 1}),
         ]
     )
 
@@ -333,9 +489,7 @@ def test_orchestration_creates_when_no_matching_workspace(tmp_path: Path) -> Non
 
 def test_no_tabs_keeps_one_shell_tab_without_focus(tmp_path: Path) -> None:
     config = make_config(tmp_path, "")
-    runner = FakeRunner(
-        [server_running(), no_workspaces(), workspace_created("w2")]
-    )
+    runner = FakeRunner([server_running(), no_workspaces(), workspace_created("w2")])
 
     result = orchestrate(
         config,
@@ -429,9 +583,7 @@ def test_setup_failure_rolls_back_without_post_hook(tmp_path: Path) -> None:
 
 def test_presentation_failure_is_a_structured_warning(tmp_path: Path) -> None:
     config = make_config(tmp_path, "")
-    runner = FakeRunner(
-        [server_running(), no_workspaces(), workspace_created(), ok()]
-    )
+    runner = FakeRunner([server_running(), no_workspaces(), workspace_created(), ok()])
 
     class NoWindows:
         def windows(self):

@@ -92,6 +92,8 @@ Paths expand `~` and environment variables. Project names and aliases must be un
 hterm --version
 hterm config path
 hterm add                         # interactively add the current project
+hterm fix                        # reconcile the focused workspace with coding
+hterm fix --layout=ops --force   # use ops and close extra tabs
 hterm list --json
 hterm check [PROJECT]
 hterm lifecycle install-plugin     # link the Herdr workspace-close plugin
@@ -103,6 +105,8 @@ hterm example --dry-run            # inspect the launch without side effects
 ```
 
 `hterm add` prompts for the project name, label, working directory, and an optional existing layout, then appends the project to the configuration. It creates a missing configuration with the built-in `home` project. Pass `--config PATH` to edit another configuration.
+
+`hterm fix` finds the focused Herdr workspace and reconciles its tabs with `settings.fix_layout` (default: `coding`), or the layout passed with `--layout`. Matching tabs are preserved and missing tabs are created; extra tabs are retained unless `--force` is supplied. For linked worktrees, inherited tab directories use the active checkout rather than the project's repository root. Fixing does not run project hooks. Use `--dry-run` to inspect the plan.
 
 `--config PATH`, `--json`, and `--no-focus` are supported for launches. If a Herdr workspace already has the project's label, hterm reuses it instead of running hooks or creating and configuring another workspace; with focus enabled, it focuses that workspace and returns `"reused": true`. If duplicate labels exist, hterm deterministically prefers the focused workspace, then the lowest workspace number.
 

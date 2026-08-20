@@ -10,9 +10,9 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
-from hterm.config import Config, Project, Tab
+from hterm.config import Config, LayoutTab, Project, Tab
 from hterm.errors import HtermError
 from hterm.lifecycle import LifecycleStore
 from hterm.presentation import (
@@ -32,6 +32,60 @@ class CreatedTab:
 
     def to_dict(self) -> dict[str, Any]:
         return {"name": self.name, "tab_id": self.tab_id, "pane_id": self.pane_id}
+
+
+@dataclass(frozen=True, slots=True)
+class ExistingTab:
+    name: str | None
+    tab_id: str
+    number: int
+    focused: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "tab_id": self.tab_id,
+            "number": self.number,
+            "focused": self.focused,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class FocusedWorkspace:
+    workspace_id: str
+    label: str | None
+    checkout_path: Path | None
+    repo_root: Path | None
+
+
+@dataclass(frozen=True, slots=True)
+class FixResult:
+    workspace_id: str
+    layout: str
+    project: str | None
+    cwd: Path
+    kept: tuple[ExistingTab, ...]
+    created: tuple[CreatedTab, ...]
+    closed: tuple[ExistingTab, ...]
+    retained_extras: tuple[ExistingTab, ...]
+    missing: tuple[str | None, ...]
+    focused_tab_id: str | None
+    dry_run: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "workspace_id": self.workspace_id,
+            "layout": self.layout,
+            "project": self.project,
+            "cwd": str(self.cwd),
+            "kept": [tab.to_dict() for tab in self.kept],
+            "created": [tab.to_dict() for tab in self.created],
+            "closed": [tab.to_dict() for tab in self.closed],
+            "retained_extras": [tab.to_dict() for tab in self.retained_extras],
+            "missing": list(self.missing),
+            "focused_tab_id": self.focused_tab_id,
+            "dry_run": self.dry_run,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +110,10 @@ class WorkspaceResult:
             "warnings": [dict(warning) for warning in self.warnings],
             "reused": self.reused,
         }
+
+
+class WorkspacePresenter(Protocol):
+    def present(self) -> PresentationResult: ...
 
 
 class HerdrClient:
@@ -209,17 +267,59 @@ class HerdrClient:
             raise HtermError("herdr_protocol_error", f"Invalid Herdr {operation} IDs")
         return workspace_id, tab_id, pane_id
 
-    def workspace_with_label(self, label: str) -> str | None:
+    def _workspaces(self) -> list[Mapping[str, Any]]:
         payload = self._json("workspace", "list")
         result = payload.get("result")
         workspaces = result.get("workspaces") if isinstance(result, dict) else None
-        if not isinstance(workspaces, list):
+        if not isinstance(workspaces, list) or any(
+            not isinstance(workspace, dict) for workspace in workspaces
+        ):
             raise HtermError(
                 "herdr_protocol_error", "Invalid Herdr workspace list response"
             )
+        return workspaces
 
+    def focused_workspace(self) -> FocusedWorkspace:
+        focused = [
+            workspace
+            for workspace in self._workspaces()
+            if workspace.get("focused") is True
+        ]
+        if not focused:
+            raise HtermError(
+                "focused_workspace_not_found", "No focused Herdr workspace was found"
+            )
+        if len(focused) != 1:
+            raise HtermError(
+                "herdr_protocol_error", "Herdr returned multiple focused workspaces"
+            )
+        workspace = focused[0]
+        workspace_id = workspace.get("workspace_id")
+        if not isinstance(workspace_id, str) or not workspace_id:
+            raise HtermError(
+                "herdr_protocol_error", "Invalid focused Herdr workspace response"
+            )
+        label = workspace.get("label")
+        worktree = workspace.get("worktree")
+
+        def worktree_path(field: str) -> Path | None:
+            value = worktree.get(field) if isinstance(worktree, dict) else None
+            return (
+                Path(value).resolve(strict=False)
+                if isinstance(value, str) and value
+                else None
+            )
+
+        return FocusedWorkspace(
+            workspace_id,
+            label if isinstance(label, str) else None,
+            worktree_path("checkout_path"),
+            worktree_path("repo_root"),
+        )
+
+    def workspace_with_label(self, label: str) -> str | None:
         matches: list[tuple[bool, int, str]] = []
-        for workspace in workspaces:
+        for workspace in self._workspaces():
             if not isinstance(workspace, dict) or workspace.get("label") != label:
                 continue
             workspace_id = workspace.get("workspace_id")
@@ -229,12 +329,66 @@ class HerdrClient:
                 )
             focused = workspace.get("focused") is True
             number = workspace.get("number")
-            matches.append((focused, number if isinstance(number, int) else 2**31, workspace_id))
+            matches.append(
+                (focused, number if isinstance(number, int) else 2**31, workspace_id)
+            )
 
         if not matches:
             return None
         matches.sort(key=lambda item: (not item[0], item[1], item[2]))
         return matches[0][2]
+
+    def tabs(self, workspace_id: str) -> tuple[ExistingTab, ...]:
+        payload = self._json("tab", "list", "--workspace", workspace_id)
+        result = payload.get("result")
+        tabs = result.get("tabs") if isinstance(result, dict) else None
+        if not isinstance(tabs, list):
+            raise HtermError("herdr_protocol_error", "Invalid Herdr tab list response")
+        parsed: list[ExistingTab] = []
+        for index, tab in enumerate(tabs, start=1):
+            if not isinstance(tab, dict):
+                raise HtermError(
+                    "herdr_protocol_error", "Invalid Herdr tab list response"
+                )
+            tab_id = tab.get("tab_id")
+            if not isinstance(tab_id, str) or not tab_id:
+                raise HtermError(
+                    "herdr_protocol_error", "Invalid Herdr tab list response"
+                )
+            name = tab.get("label")
+            number = tab.get("number")
+            parsed.append(
+                ExistingTab(
+                    name if isinstance(name, str) else None,
+                    tab_id,
+                    number if isinstance(number, int) else index,
+                    tab.get("focused") is True,
+                )
+            )
+        return tuple(sorted(parsed, key=lambda tab: (tab.number, tab.tab_id)))
+
+    def focused_pane_cwd(self, workspace_id: str) -> Path:
+        payload = self._json("pane", "list", "--workspace", workspace_id)
+        result = payload.get("result")
+        panes = result.get("panes") if isinstance(result, dict) else None
+        if not isinstance(panes, list):
+            raise HtermError("herdr_protocol_error", "Invalid Herdr pane list response")
+        candidates = sorted(
+            (pane for pane in panes if isinstance(pane, dict)),
+            key=lambda pane: (
+                pane.get("focused") is not True,
+                str(pane.get("pane_id", "")),
+            ),
+        )
+        for pane in candidates:
+            value = pane.get("foreground_cwd") or pane.get("cwd")
+            if isinstance(value, str) and value:
+                return Path(value).resolve(strict=False)
+        raise HtermError(
+            "workspace_cwd_not_found",
+            "Unable to determine the focused workspace working directory",
+            {"workspace_id": workspace_id},
+        )
 
     def create_workspace(self, cwd: Path, label: str) -> tuple[str, str, str]:
         payload = self._json(
@@ -274,6 +428,9 @@ class HerdrClient:
             self._json("tab", "focus", tab_id)
         else:
             self._json("workspace", "focus", workspace_id)
+
+    def close_tab(self, tab_id: str) -> None:
+        self._json("tab", "close", tab_id)
 
     def close_workspace(self, workspace_id: str) -> None:
         self._json("workspace", "close", workspace_id)
@@ -381,6 +538,157 @@ def dry_run_result(config: Config, project: Project, *, focus: bool) -> dict[str
     }
 
 
+def _project_for_workspace(
+    config: Config, workspace: FocusedWorkspace
+) -> Project | None:
+    """Match paths before labels so linked worktrees resolve to their project."""
+    path_matches: list[Project] = []
+    workspace_paths = {workspace.checkout_path, workspace.repo_root} - {None}
+    for project in config.projects.values():
+        if project.cwd in workspace_paths:
+            path_matches.append(project)
+    if len(path_matches) == 1:
+        return path_matches[0]
+    if workspace.label is not None:
+        labeled = [
+            project
+            for project in (path_matches or list(config.projects.values()))
+            if project.label == workspace.label
+        ]
+        if len(labeled) == 1:
+            return labeled[0]
+    return None
+
+
+def _match_layout_tabs(
+    definitions: tuple[LayoutTab, ...], existing: tuple[ExistingTab, ...]
+) -> tuple[list[ExistingTab | None], list[ExistingTab]]:
+    available = list(existing)
+    matches: list[ExistingTab | None] = []
+    for index, definition in enumerate(definitions):
+        match: ExistingTab | None = None
+        if definition.name is not None:
+            match = next(
+                (tab for tab in available if tab.name == definition.name), None
+            )
+        elif index < len(existing) and existing[index] in available:
+            match = existing[index]
+        matches.append(match)
+        if match is not None:
+            available.remove(match)
+    return matches, available
+
+
+def fix_focused_workspace(
+    config: Config,
+    *,
+    layout_name: str | None = None,
+    force: bool = False,
+    dry_run: bool = False,
+    runner: ProcessRunner | None = None,
+) -> FixResult:
+    """Reconcile the focused workspace with a named layout."""
+    selected_layout = layout_name or config.settings.fix_layout
+    try:
+        layout = config.layouts[selected_layout]
+    except KeyError:
+        raise HtermError(
+            "layout_not_found",
+            f"Unknown layout: {selected_layout}",
+            {"layout": selected_layout, "config_path": str(config.path)},
+        ) from None
+
+    active_runner = runner or SubprocessRunner()
+    herdr = HerdrClient(config.settings.herdr_binary, active_runner)
+    workspace = herdr.focused_workspace()
+    project = _project_for_workspace(config, workspace)
+    cwd = workspace.checkout_path or (project.cwd if project is not None else None)
+    if cwd is None:
+        cwd = herdr.focused_pane_cwd(workspace.workspace_id)
+
+    # Empty layouts have the same meaning as project launches with no tabs: keep
+    # one interactive shell rooted at the workspace/worktree directory.
+    definitions = layout.tabs or (LayoutTab(None, None, None),)
+    existing = herdr.tabs(workspace.workspace_id)
+    matches, extras = _match_layout_tabs(definitions, existing)
+    missing_definitions = tuple(
+        definition
+        for definition, match in zip(definitions, matches, strict=True)
+        if match is None
+    )
+    kept = tuple(match for match in matches if match is not None)
+    to_close = tuple(extras) if force else ()
+    retained = () if force else tuple(extras)
+
+    if dry_run:
+        focus_id = next(
+            (
+                match.tab_id
+                for definition, match in zip(definitions, matches, strict=True)
+                if definition.focus and match is not None
+            ),
+            None,
+        )
+        return FixResult(
+            workspace.workspace_id,
+            selected_layout,
+            project.name if project is not None else None,
+            cwd,
+            kept,
+            (),
+            to_close,
+            retained,
+            tuple(definition.name for definition in missing_definitions),
+            focus_id,
+            dry_run=True,
+        )
+
+    created: list[CreatedTab] = []
+    created_by_index: dict[int, CreatedTab] = {}
+    for index, (definition, match) in enumerate(zip(definitions, matches, strict=True)):
+        if match is not None:
+            continue
+        tab = Tab(
+            definition.name,
+            definition.command,
+            definition.cwd or cwd,
+            definition.focus,
+        )
+        tab_id, pane_id = herdr.create_tab(workspace.workspace_id, tab)
+        created_tab = CreatedTab(tab.name, tab_id, pane_id)
+        created.append(created_tab)
+        created_by_index[index] = created_tab
+        if tab.command:
+            herdr.run_pane(pane_id, tab.command)
+
+    focus_id: str | None = None
+    for index, definition in enumerate(definitions):
+        if not definition.focus:
+            continue
+        matched = matches[index]
+        focus_id = (
+            matched.tab_id if matched is not None else created_by_index[index].tab_id
+        )
+        break
+    if focus_id is not None:
+        herdr.focus(workspace.workspace_id, focus_id)
+    for tab in to_close:
+        herdr.close_tab(tab.tab_id)
+
+    return FixResult(
+        workspace.workspace_id,
+        selected_layout,
+        project.name if project is not None else None,
+        cwd,
+        kept,
+        tuple(created),
+        to_close,
+        retained,
+        (),
+        focus_id,
+    )
+
+
 def orchestrate(
     config: Config,
     project: Project,
@@ -388,7 +696,7 @@ def orchestrate(
     focus: bool,
     runner: ProcessRunner | None = None,
     lifecycle: LifecycleStore | None = None,
-    presenter: GhosttyPresenter | None = None,
+    presenter: WorkspacePresenter | None = None,
 ) -> WorkspaceResult:
     """Reuse a matching Herdr workspace, or create and configure one."""
     runner = runner or SubprocessRunner()

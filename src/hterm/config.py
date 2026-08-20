@@ -13,7 +13,17 @@ from hterm.errors import ConfigurationError
 
 SUPPORTED_VERSION = 1
 RESERVED_NAMES = frozenset(
-    {"add", "open", "list", "check", "completion", "config", "finder", "lifecycle"}
+    {
+        "add",
+        "open",
+        "fix",
+        "list",
+        "check",
+        "completion",
+        "config",
+        "finder",
+        "lifecycle",
+    }
 )
 
 
@@ -26,6 +36,7 @@ class Settings:
     hook_timeout_seconds: float = 60
     focus: bool = True
     herdr_title_match: str = "herdr"
+    fix_layout: str = "coding"
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,7 +186,13 @@ def _settings(data: Any, path: Path) -> Settings:
         "settings.herdr_title_match",
         path,
     )
+    fix_layout = _string(
+        table.get("fix_layout", defaults.fix_layout),
+        "settings.fix_layout",
+        path,
+    )
     assert title_match is not None
+    assert fix_layout is not None
 
     def setting_path(key: str, default: Path) -> Path:
         return _path(table.get(key, str(default)), f"settings.{key}", path)
@@ -188,6 +205,7 @@ def _settings(data: Any, path: Path) -> Settings:
         hook_timeout_seconds=float(timeout),
         focus=focus,
         herdr_title_match=title_match,
+        fix_layout=fix_layout,
     )
 
 

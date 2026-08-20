@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 from hterm.cli import app as app_module
 from hterm.cli.app import LaunchRequest, app
 from hterm.errors import HtermError
+from hterm.orchestration import FixResult
 
 runner = CliRunner()
 
@@ -122,6 +123,38 @@ keywords = ["python", "development"]
         "demo\tBuild the app · Demo Workspace · aliases: d · "
         "keywords: python, development\n"
     )
+
+
+def test_fix_routes_layout_force_and_dry_run(monkeypatch) -> None:
+    calls: list[tuple[str | None, bool, bool]] = []
+
+    def fake_fix(_config, *, layout_name, force, dry_run):
+        calls.append((layout_name, force, dry_run))
+        return FixResult(
+            "w1",
+            layout_name or "coding",
+            None,
+            Path("/tmp"),
+            (),
+            (),
+            (),
+            (),
+            (),
+            None,
+            dry_run,
+        )
+
+    monkeypatch.setattr(app_module, "fix_focused_workspace", fake_fix)
+    result = runner.invoke(
+        app, ["fix", "--layout=ops", "--force", "--dry-run", "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [("ops", True, True)]
+    payload = json.loads(result.stdout)
+    assert payload["action"] == "fix"
+    assert payload["layout"] == "ops"
+    assert payload["dry_run"] is True
 
 
 def test_reserved_command_is_not_project_shorthand(monkeypatch) -> None:

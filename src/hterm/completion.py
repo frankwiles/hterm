@@ -67,6 +67,7 @@ _hterm_commands() {
   local -a commands=(
     'add:add a project to the configuration'
     'open:open a project'
+    'fix:reconcile the focused workspace with a layout'
     'list:list configured projects'
     'check:validate configuration or a project'
     'completion:generate shell completion code'
@@ -109,6 +110,11 @@ _hterm() {
               '--json[emit one JSON result]' '--dry-run[plan without side effects]' \
               '--no-focus[do not focus a terminal]'
           fi
+          ;;
+        fix)
+          _arguments '--layout=[named layout]:layout' '--force[close extra tabs]' \
+            '--config=[configuration file]:configuration file:_files' \
+            '--json[emit one JSON result]' '--dry-run[plan without side effects]'
           ;;
         check)
           if (( CURRENT == 3 )); then
