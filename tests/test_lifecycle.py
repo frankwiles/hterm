@@ -103,7 +103,7 @@ def test_post_hook_runs_once_with_complete_environment_and_records_output(
     assert duplicate.claimed is False
     assert len(runner.calls) == 1
     command, cwd, environment, timeout = runner.calls[0]
-    assert command == ("/bin/zsh", "-lc", "echo closed")
+    assert command == (str(config.settings.hook_shell), "-lc", "echo closed")
     assert cwd == config.resolve().cwd
     assert timeout == 12
     assert environment is not None

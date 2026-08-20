@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from hterm.cli.app import app
 from hterm.completion import ZSH_COMPLETION
 
 runner = CliRunner()
+zsh = pytest.mark.skipif(shutil.which("zsh") is None, reason="zsh is not installed")
 
 
 def config_text(project_dir: Path, name: str = "do2") -> str:
@@ -25,6 +28,7 @@ aliases = ["d2"]
 '''
 
 
+@zsh
 def test_completion_zsh_emits_valid_dynamic_function(tmp_path: Path) -> None:
     result = runner.invoke(app, ["completion", "zsh"])
 
@@ -35,7 +39,7 @@ def test_completion_zsh_emits_valid_dynamic_function(tmp_path: Path) -> None:
     script = tmp_path / "_hterm"
     script.write_text(result.stdout)
     syntax = subprocess.run(
-        ("/bin/zsh", "-n", str(script)), check=False, capture_output=True, text=True
+        ("zsh", "-n", str(script)), check=False, capture_output=True, text=True
     )
     assert syntax.returncode == 0, syntax.stderr
 
@@ -84,6 +88,7 @@ def test_completion_data_reflects_config_changes_without_regeneration(
     assert runner.invoke(app, ["completion", "zsh"]).stdout == completion_script
 
 
+@zsh
 def test_alias_matching_inserts_the_canonical_project_name(tmp_path: Path) -> None:
     project_dir = tmp_path / "project"
     project_dir.mkdir()
@@ -107,7 +112,7 @@ _hterm_projects
 """
 
     completed = subprocess.run(
-        ("/bin/zsh", "-f"),
+        ("zsh", "-f"),
         input=harness,
         check=False,
         capture_output=True,
