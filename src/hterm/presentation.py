@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import time
 from collections.abc import Callable, Sequence
@@ -18,7 +19,7 @@ _WINDOW_FORMAT = (
     "%{window-id} %{app-bundle-id} %{window-title} %{workspace} "
     "%{workspace-is-visible} %{workspace-is-focused}"
 )
-_ATTACH_COMMAND = "herdr session attach default"
+_ATTACH_ARGS = ("session", "attach", "default")
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,11 +190,13 @@ class GhosttyAppleScript:
         app: Path,
         runner: ProcessRunner,
         *,
+        herdr_binary: Path = Path("/opt/homebrew/bin/herdr"),
         osascript_binary: str = "/usr/bin/osascript",
         timeout: float = 10,
     ) -> None:
         self.app = app
         self.runner = runner
+        self.herdr_binary = herdr_binary
         self.osascript_binary = osascript_binary
         self.timeout = timeout
 
@@ -203,7 +206,9 @@ class GhosttyAppleScript:
                 "ghostty_not_found", f"Ghostty application not found: {self.app}"
             )
         app = _applescript_string(str(self.app))
-        command = _applescript_string(_ATTACH_COMMAND)
+        command = _applescript_string(
+            shlex.join((str(self.herdr_binary), *_ATTACH_ARGS))
+        )
         script = f"""using terms from application "Ghostty"
     tell application {app}
         set cfg to new surface configuration

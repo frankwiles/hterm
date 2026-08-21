@@ -257,13 +257,30 @@ def test_applescript_creates_configured_attach_window(tmp_path: Path) -> None:
     app.mkdir()
     runner = Runner([result()])
 
-    GhosttyAppleScript(app, runner).create_attached_window()
+    GhosttyAppleScript(
+        app, runner, herdr_binary=Path("/custom/herdr")
+    ).create_attached_window()
 
     script = runner.calls[0][2]
     assert runner.calls[0][:2] == ("/usr/bin/osascript", "-e")
     assert "new surface configuration" in script
-    assert 'set command of cfg to "herdr session attach default"' in script
+    assert 'set command of cfg to "/custom/herdr session attach default"' in script
     assert "new window with configuration cfg" in script
+
+
+def test_applescript_shell_quotes_herdr_binary(tmp_path: Path) -> None:
+    app = tmp_path / "Ghostty.app"
+    app.mkdir()
+    runner = Runner([result()])
+
+    GhosttyAppleScript(
+        app, runner, herdr_binary=Path("/Applications/Herdr Tools/herdr")
+    ).create_attached_window()
+
+    assert (
+        "set command of cfg to \"'/Applications/Herdr Tools/herdr' "
+        'session attach default"' in runner.calls[0][2]
+    )
 
 
 @pytest.mark.parametrize(

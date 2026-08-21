@@ -712,7 +712,11 @@ def orchestrate(
             herdr.focus(existing_workspace_id, None)
             active_presenter = presenter or GhosttyPresenter(
                 AeroSpaceWindowSource(config.settings.aerospace_binary, runner),
-                GhosttyAppleScript(config.settings.ghostty_app, runner),
+                GhosttyAppleScript(
+                    config.settings.ghostty_app,
+                    runner,
+                    herdr_binary=config.settings.herdr_binary,
+                ),
                 title_match=config.settings.herdr_title_match,
             )
             try:
@@ -786,7 +790,11 @@ def orchestrate(
             herdr.focus(workspace_id, focused_tab)
             active_presenter = presenter or GhosttyPresenter(
                 AeroSpaceWindowSource(config.settings.aerospace_binary, runner),
-                GhosttyAppleScript(config.settings.ghostty_app, runner),
+                GhosttyAppleScript(
+                    config.settings.ghostty_app,
+                    runner,
+                    herdr_binary=config.settings.herdr_binary,
+                ),
                 title_match=config.settings.herdr_title_match,
             )
             try:

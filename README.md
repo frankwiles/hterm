@@ -110,7 +110,17 @@ hterm example --dry-run            # inspect the launch without side effects
 
 `--config PATH`, `--json`, and `--no-focus` are supported for launches. If a Herdr workspace already has the project's label, hterm reuses it instead of running hooks or creating and configuring another workspace; with focus enabled, it focuses that workspace and returns `"reused": true`. If duplicate labels exist, hterm deterministically prefers the focused workspace, then the lowest workspace number.
 
-With focus enabled, hterm also reuses a Ghostty window whose title contains `herdr` (customizable with `settings.herdr_title_match`); if none exists, it creates a Ghostty window running `herdr session attach default` and identifies the new AeroSpace window by ID snapshot difference. Among multiple matches it prefers the focused workspace, then a visible workspace, then the lowest window ID. It focuses the exact result with `aerospace focus --window-id ID`. Presentation failures are returned as structured warnings because the Herdr workspace was still created or found successfully.
+With focus enabled, hterm also reuses a Ghostty window whose title contains `herdr` (customizable with `settings.herdr_title_match`); if none exists, it creates a Ghostty window using the configured absolute `settings.herdr_binary` to attach to the default session and identifies the new AeroSpace window by ID snapshot difference. Among multiple matches it prefers the focused workspace, then a visible workspace, then the lowest window ID. It focuses the exact result with `aerospace focus --window-id ID`. Presentation failures are returned as structured warnings because the Herdr workspace was still created or found successfully.
+
+Herdr 0.8.2 changed its default outer terminal title to `{hostname}: {workspace}`. Give Herdr windows a stable marker matching `settings.herdr_title_match` so hterm can distinguish them from ordinary Ghostty windows:
+
+```toml
+# ~/.config/herdr/config.toml
+[ui]
+window_title = "herdr — {hostname}: {workspace}"
+```
+
+Apply that change with `herdr server reload-config`.
 
 JSON mode writes exactly one result envelope to stdout; expected failures exit with status 1, while invalid CLI usage exits with status 2.
 
